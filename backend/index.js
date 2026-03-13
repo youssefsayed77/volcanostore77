@@ -14,6 +14,7 @@ const app = express();
 
 const MONGODB_URI = process.env.MONGODB_URI;
 const JWT_SECRET = process.env.JWT_SECRET || "change-this-secret";
+const PORT = process.env.PORT || 5000;
 
 app.use(cors());
 app.use(express.json());
@@ -21,7 +22,7 @@ app.use(express.json());
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// تعديل بسيط عشان الـ Vercel بيقرأ الـ /tmp بس في الرفع المؤقت
+// ضبط فولدر الرفع (استخدام /tmp مناسب للسيرفرات السحابية)
 const uploadsDir = path.join("/tmp", "uploads");
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
@@ -82,9 +83,14 @@ const adminMiddleware = (req, res, next) => {
 };
 
 // --- Routes ---
+
+// الصفحة الرئيسية عشان نلغي الـ 403
+app.get("/", (req, res) => {
+  res.send("Volcano Store API is Running...");
+});
+
 app.get("/api/products", async (_req, res) => {
   try {
-    await mongoose.connect(MONGODB_URI); // اتصال سريع لضمان الربط في الـ Serverless
     const products = await Product.find().sort({ createdAt: -1 });
     res.json(products);
   } catch (error) { res.status(500).json({ error: error.message }); }
@@ -92,7 +98,6 @@ app.get("/api/products", async (_req, res) => {
 
 app.post("/api/auth/login", async (req, res) => {
   try {
-    await mongoose.connect(MONGODB_URI);
     const { email, password } = req.body;
     const user = await User.findOne({ email: email?.toLowerCase() });
     if (!user || !(await bcrypt.compare(password, user.password))) {
@@ -103,10 +108,8 @@ app.post("/api/auth/login", async (req, res) => {
   } catch (error) { res.status(500).json({ message: "Login failed" }); }
 });
 
-// باقي الـ Routes (products delete, post) تفضل زي ما هي بس ضيف mongoose.connect جواها
 app.post("/api/products", authMiddleware, adminMiddleware, upload.single("imageFormFile"), async (req, res) => {
     try {
-      await mongoose.connect(MONGODB_URI);
       const { name, description, price, category } = req.body;
       if (!req.file) return res.status(400).json({ message: "Please upload an image" });
       const product = await Product.create({ name, description, price, category, image: `/uploads/${req.file.filename}` });
@@ -114,5 +117,23 @@ app.post("/api/products", authMiddleware, adminMiddleware, upload.single("imageF
     } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
-// --- Vercel Export ---
-export default app;
+// --- Server Startup ---
+// هنا التعديل الجوهري عشان Railway يشغل السيرفر صح
+const startServer = async () => {
+  try {
+    if (!MONGODB_URI) {
+      throw new Error("MONGODB_URI is not defined in environment variables");
+    }
+    await mongoose.connect(MONGODB_URI);
+    console.log("✅ Connected to MongoDB Atlas");
+    
+    app.listen(PORT, () => {
+      console.log(`🚀 Server is running on port ${PORT}`);
+    });
+  } catch (err) {
+    console.error("❌ Failed to start server:", err.message);
+    process.exit(1);
+  }
+};
+
+startServer();
